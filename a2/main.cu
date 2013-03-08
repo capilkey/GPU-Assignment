@@ -2,10 +2,24 @@
 #include <iostream>
 #include <algorithm>
 #include <time.h>
+#include <cuda_runtime.h>
 #include "utils.h"
 #include "besselj.h"
 
+#define D_MEM_CHUNKS 2
+
 using namespace std;
+
+__global__ void draw_field(unsigned char *data, float *curr_field, int *color_shift, int *color_scale, int n) {
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx < n) {
+		int place = idx * 3;
+		float s = curr_field[idx];
+		for(int k=0; k<3; ++k) {
+            data[place+k] = max(0, min(255, (int)(color_shift[k] + color_scale[k]*s)));
+        }
+	}
+}
 
 //Precalculate multipliers for m,n
 void initialize_MN(float* M_re, float* M_im, float* N_re, float* N_im, float inner_w, float outer_w){ 
@@ -85,12 +99,72 @@ void step(float** fields, int &current_field, float* imaginary_field, float* M_r
 }
 
 //Extract image data
-void draw_field(float** fields, int &current_field, int* color_shift, int* color_scale) {
-    unsigned char data [DIMENSION * DIMENSION * 3];            
-    int image_ptr = 0;
-    
+void draw_field(float** fields, int &current_field, int* color_shift, int* color_scale, int mThreads) {
+    //unsigned char data [DIMENSION * DIMENSION * 3];            
+    //int image_ptr = 0;
+    cudaError_t error;
+
     float* cur_field = fields[current_field];
     
+	int n = DIMENSION*DIMENSION;
+
+	unsigned char *h_data = new unsigned char[n * 3];
+	unsigned char *d_data;
+	error = cudaMalloc((void**)&d_data, n*3*sizeof(unsigned char));
+	if (error != cudaSuccess) {
+		cout << cudaGetErrorString(error) << endl;
+	}
+	error = cudaMemset(d_data, 0, n*3*sizeof(unsigned char));
+	if (error != cudaSuccess) {
+		cout << cudaGetErrorString(error) << endl;
+	}
+
+	float *d_field;
+	error = cudaMalloc((void**)&d_field, n*sizeof(float));
+	if (error != cudaSuccess) {
+		cout << cudaGetErrorString(error) << endl;
+	}
+	error = cudaMemcpy(d_field, cur_field, n*sizeof(float), cudaMemcpyHostToDevice);
+	if (error != cudaSuccess) {
+		cout << cudaGetErrorString(error) << endl;
+	}
+
+	int *d_color_scale;
+	error = cudaMalloc((void**)&d_color_scale, 3*sizeof(int));
+	if (error != cudaSuccess) {
+		cout << cudaGetErrorString(error) << endl;
+	}
+	error = cudaMemcpy(d_color_scale, color_scale, 3*sizeof(int), cudaMemcpyHostToDevice);
+	if (error != cudaSuccess) {
+		cout << cudaGetErrorString(error) << endl;
+	}
+
+	int *d_color_shift;
+	error = cudaMalloc((void**)&d_color_shift, 3*sizeof(int));
+	if (error != cudaSuccess) {
+		cout << cudaGetErrorString(error) << endl;
+	}
+	error = cudaMemcpy(d_color_shift, color_shift, 3*sizeof(int), cudaMemcpyHostToDevice);
+	if (error != cudaSuccess) {
+		cout << cudaGetErrorString(error) << endl;
+	}
+
+	error = cudaGetLastError();
+	draw_field<<<(n+mThreads-1) / mThreads, mThreads>>>(d_data, d_field, d_color_shift, d_color_scale, n);
+
+	cudaDeviceSynchronize();
+
+	error = cudaGetLastError();
+	if (error != cudaSuccess) {
+		cout << cudaGetErrorString(error) << endl;
+	}
+
+	error = cudaMemcpy(h_data, d_data, n*3*sizeof(unsigned char), cudaMemcpyDeviceToHost);
+	if (error != cudaSuccess) {
+		cout << cudaGetErrorString(error) << endl;
+	}
+	
+	/*
     for(int i=0; i<DIMENSION; ++i) {
         for(int j=0; j<DIMENSION; ++j) {
             float s = cur_field[i*DIMENSION+j];
@@ -100,8 +174,14 @@ void draw_field(float** fields, int &current_field, int* color_shift, int* color
             }
         }
     }
-
-    createBMP(DIMENSION, DIMENSION, data, DIMENSION*DIMENSION*4, "temp.bmp");
+	*/
+	
+    createBMP(DIMENSION, DIMENSION, h_data, DIMENSION*DIMENSION*4, "temp.bmp");
+	cudaFree(d_data);
+	delete [] h_data;
+	cudaFree(d_field);
+	cudaFree(d_color_scale);
+	cudaFree(d_color_shift);
 }
 
 //Initialize field to x
@@ -168,11 +248,23 @@ int main() {
 	initialize_MN(M_re, M_im, N_re, N_im, inner_w, outer_w);
 
 	clear_field(0, fields, current_field);
-	add_speckles(200, 1, fields, current_field);
+	add_speckles(300, 1, fields, current_field);
 
-	for (int i=0; i<1000; i++) {
+	int d;
+	cudaDeviceProp prop;
+	cudaGetDevice(&d);
+	cudaGetDeviceProperties(&prop, d);
+	int mThreads = prop.maxThreadsDim[0];
+	int mBlocks  = prop.maxGridSize[0];
+	int mElemnts = prop.totalGlobalMem / (D_MEM_CHUNKS * sizeof(float));
+
+	cout << "number of threads reduced to " << mThreads << endl;
+	cout << "number of blocks reduced to " << mBlocks << endl;
+	cout << "number of elements reduced to " << mElemnts << endl;
+
+	for (int i=0; i<100; i++) {
 		step(fields, current_field, imaginary_field, M_re, M_im, N_re, N_im, M_re_buffer, M_im_buffer, N_re_buffer, N_im_buffer);
-		draw_field(fields, current_field, color_shift, color_scale);
+		draw_field(fields, current_field, color_shift, color_scale, mThreads);
 	}
 	
 	delete [] fields[0];
