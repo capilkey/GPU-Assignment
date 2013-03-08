@@ -1,25 +1,14 @@
 
 #include <iostream>
 #include <algorithm>
-#include <ctime>
+#include <time.h>
 #include "utils.h"
 #include "besselj.h"
 
 using namespace std;
 
 //Precalculate multipliers for m,n
-void initialize_MN(float*& M_re, float*& M_im, float*& N_re, float*& N_im){
-    BesselJ* inner_bessel = new BesselJ(INNER_RADIUS);
-    BesselJ* outer_bessel = new BesselJ(OUTER_RADIUS);
-    
-    float inner_w = (float)1.0 / inner_bessel->w;
-    float outer_w = (float)1.0 / (outer_bessel->w - inner_bessel->w);
-    
-    M_re = inner_bessel->re;
-    M_im = inner_bessel->im;
-    N_re = outer_bessel->re;
-    N_im = outer_bessel->im;
-    
+void initialize_MN(float* M_re, float* M_im, float* N_re, float* N_im, float inner_w, float outer_w){ 
     for(int i=0; i<DIMENSION; ++i) {
         for(int j=0; j<DIMENSION; ++j) {
             N_re[i*DIMENSION+j] = outer_w * (N_re[i*DIMENSION+j] - M_re[i*DIMENSION+j]);
@@ -132,11 +121,11 @@ void add_speckles(int count, int intensity, float **fields, int &current_field) 
     float* cur_field = fields[current_field];
 
 	//THIS ISNT WORKING AND I DONT KNOW WHY!!!!!!
-	//srand(time(NULL));
+	srand(time(NULL));
 
     for(int i=0; i<count; ++i) {
-        int u = (int)(rand() * (DIMENSION-INNER_RADIUS));
-        int v = (int)(rand() * (DIMENSION-INNER_RADIUS));
+        int u = (int)(rand() % (DIMENSION-INNER_RADIUS) + 1);
+        int v = (int)(rand() % (DIMENSION-INNER_RADIUS) + 1);
         for(int x=0; x<INNER_RADIUS; ++x) {
             for(int y=0; y<INNER_RADIUS; ++y) {
                 cur_field[(u+x)*DIMENSION+v+y] = intensity;
@@ -165,9 +154,18 @@ int main() {
 	float* N_re_buffer = new float[field_size];
 	float* N_im_buffer = new float[field_size];
 
-	float *M_re, *M_im, *N_re, *N_im;
+	BesselJ inner_bessel(INNER_RADIUS);
+    BesselJ outer_bessel(OUTER_RADIUS);
+    
+    float inner_w = (float)1.0 / inner_bessel.w;
+    float outer_w = (float)1.0 / (outer_bessel.w - inner_bessel.w);
+    
+    float *M_re = inner_bessel.re;
+    float *M_im = inner_bessel.im;
+    float *N_re = outer_bessel.re;
+    float *N_im = outer_bessel.im;
 
-	initialize_MN(M_re, M_im, N_re, N_im);
+	initialize_MN(M_re, M_im, N_re, N_im, inner_w, outer_w);
 
 	clear_field(0, fields, current_field);
 	add_speckles(200, 1, fields, current_field);
