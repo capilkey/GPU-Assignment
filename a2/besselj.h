@@ -7,5 +7,5 @@ public:
 	float w;
 
 	BesselJ(int radius);
-
+	~BesselJ() {}
 };

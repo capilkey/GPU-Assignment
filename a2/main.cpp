@@ -175,8 +175,8 @@ int main() {
 		draw_field(fields, current_field, color_shift, color_scale);
 	}
 	
+	delete [] fields[0];
 	delete [] fields[1];
-	delete [] fields[2];
 	delete [] imaginary_field;
 	delete [] M_re_buffer;
 	delete [] M_im_buffer;
@@ -186,4 +186,6 @@ int main() {
 	delete [] M_im;
 	delete [] N_re;
 	delete [] N_im;
+
+	return 1;
 }
