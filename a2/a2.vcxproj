@@ -75,7 +75,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="besselj.cpp" />
-    <ClCompile Include="main.cpp" />
+    <ClCompile Include="main.cu" />
     <ClCompile Include="utils.cpp" />
   </ItemGroup>
   <ItemGroup>
