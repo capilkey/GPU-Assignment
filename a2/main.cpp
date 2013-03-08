@@ -170,7 +170,7 @@ int main() {
 	clear_field(0, fields, current_field);
 	add_speckles(200, 1, fields, current_field);
 
-	for (int i=0; i<10; i++) {
+	for (int i=0; i<1000; i++) {
 		step(fields, current_field, imaginary_field, M_re, M_im, N_re, N_im, M_re_buffer, M_im_buffer, N_re_buffer, N_im_buffer);
 		draw_field(fields, current_field, color_shift, color_scale);
 	}

@@ -1,0 +1,17 @@
+Flat profile:
+
+Each sample counts as 0.01 seconds.
+  %   cumulative   self              self     total           
+ time   seconds   seconds    calls  ms/call  ms/call  name    
+ 50.69    115.24   115.24 15361024     0.01     0.01  fft(int, int, float*, float*)
+ 19.45    159.45    44.21 1966080000     0.00     0.00  sigma(float, float, float)
+ 10.12    182.45    23.00                             draw_field(float**, int&, int*, int*)
+  5.82    195.68    13.23    20000     0.66     0.66  field_multiply(float*, float*, float*, float*, float*, float*)
+  4.53    205.98    10.30    30002     0.34     4.18  fft2(int, int, float*, float*)
+  3.50    213.93     7.95 655360000     0.00     0.00  sigma_2(float, float, float)
+  2.95    220.63     6.70 655360000     0.00     0.00  S(float, float)
+  2.94    227.32     6.69                             step(float**, int&, float*, float*, float*, float*, float*, float*, float*, float*, float*)
+  0.01    227.34     0.02    10000     0.00     0.00  createBMP(int, int, unsigned char const*, int, char const*)
+  0.00    227.35     0.01                             BesselJ::BesselJ(int)
+  0.00    227.35     0.00        1     0.00     0.00  _GLOBAL__sub_I__Z13initialize_MNPfS_S_S_ff
+  0.00    227.35     0.00        1     0.00     0.00  _GLOBAL__sub_I__Z3fftiiPfS_

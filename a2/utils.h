@@ -2,7 +2,7 @@
 
 #define INNER_RADIUS 7
 #define OUTER_RADIUS 3 * INNER_RADIUS
-#define B1 0.278
+#define B1 0.238
 #define B2 0.365
 #define D1 0.267
 #define D2 0.445
