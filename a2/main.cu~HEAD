@@ -2,24 +2,12 @@
 #include <iostream>
 #include <algorithm>
 #include <time.h>
-#include <cuda_runtime.h>
 #include "utils.h"
 #include "besselj.h"
+#include <cuda_runtime.h>
 
-#define D_MEM_CHUNKS 2
 
 using namespace std;
-
-__global__ void draw_field(unsigned char *data, float *curr_field, int *color_shift, int *color_scale, int n) {
-	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if (idx < n) {
-		int place = idx * 3;
-		float s = curr_field[idx];
-		for(int k=0; k<3; ++k) {
-            data[place+k] = max(0, min(255, (int)(color_shift[k] + color_scale[k]*s)));
-        }
-	}
-}
 
 //Precalculate multipliers for m,n
 void initialize_MN(float* M_re, float* M_im, float* N_re, float* N_im, float inner_w, float outer_w){ 
@@ -51,21 +39,110 @@ float S(float n,float m) {
     return sigma_2(n, lerp(B1, D1, alive), lerp(B2, D2, alive));
 }
 
-void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i) {
+void field_mult_original(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i) {
     for(int i=0; i<DIMENSION; ++i) {
-        float *Ar = &a_r[i*DIMENSION], *Ai = &a_i[i*DIMENSION];
+        // Host arrays
+		float *Ar = &a_r[i*DIMENSION], *Ai = &a_i[i*DIMENSION];
         float *Br = &b_r[i*DIMENSION], *Bi = &b_i[i*DIMENSION];
-        float *Cr = &c_r[i*DIMENSION], *Ci = &c_i[i*DIMENSION];
-        for(int j=0; j<DIMENSION; ++j) {
-            float a = Ar[j];
-            float b = Ai[j];
-            float c = Br[j];
-            float d = Bi[j];
-            float t = a * (c + d);
-            Cr[j] = t - d*(a+b);
-            Ci[j] = t + c*(b-a);
-        }
+		float *Cr = &c_r[i*DIMENSION], *Ci = &c_i[i*DIMENSION];
+
+        // Original inner for-loop
+			for(int j=0; j<DIMENSION; ++j) {
+				float a = Ar[j];
+				float b = Ai[j];
+				float c = Br[j];
+				float d = Bi[j];
+				float t = a * (c + d);
+				Cr[j] = t - d*(a+b);
+				Ci[j] = t + c*(b-a);
+			}
     }
+}
+
+__global__ void fieldMult(float* Ar, float* Br, float* Cr, float* Ai, float* Bi, float* Ci){
+	float a = Ar[threadIdx.x];
+    float b = Ai[threadIdx.x];
+    float c = Br[threadIdx.x];
+    float d = Bi[threadIdx.x];
+    float t = a * (c + d);
+    Cr[threadIdx.x] = t - d*(a+b);
+    Ci[threadIdx.x] = t + c*(b-a);
+}
+
+bool serial = false;
+
+// Parallelize this
+void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i) {
+    // All parameters are arrays of length DIMENSION^2
+	int arraySize = (DIMENSION * DIMENSION);
+	
+	if (serial){
+		field_mult_original(a_r, a_i, b_r, b_i, c_r, c_i);
+	}
+	else{
+		for(int i=0; i<DIMENSION; ++i) {
+			// Host arrays (original code)
+			float *Ar = &a_r[i*DIMENSION], *Ai = &a_i[i*DIMENSION];
+			float *Br = &b_r[i*DIMENSION], *Bi = &b_i[i*DIMENSION];
+			float *Cr = &c_r[i*DIMENSION], *Ci = &c_i[i*DIMENSION];
+			// End of last bit of original function
+
+			//cout << "DEBUG: &a_r[i*DIMENSION] is " << &a_r[i*DIMENSION] << endl;
+			//cout << "DEBUG: Ar is " << Ar << endl;
+
+			// Device arrays
+			float *devAr, *devAi;
+			float *devBr, *devBi;
+			float *devCr, *devCi;
+
+			cout << "Doing cudaMalloc" << endl;
+			// Create counterparts for Ar, Br, Cr, Ai, Bi, Ci (cudaMalloc, cudaMemset)
+			cudaMalloc((void**)&devAr, arraySize * sizeof(float));
+			cudaMalloc((void**)&devBr, arraySize * sizeof(float));
+			cudaMalloc((void**)&devCr, arraySize * sizeof(float));
+			cudaMalloc((void**)&devAi, arraySize * sizeof(float));
+			cudaMalloc((void**)&devBi, arraySize * sizeof(float));
+			cudaMalloc((void**)&devCi, arraySize * sizeof(float));
+
+			/*
+			cudaMalloc(&devPtr,arraysize*sizeof(int));
+			cudaMemcpy(devPtr,host_memory,arraysize*sizeof(int),cudaMemcpyHostToDevice);
+			*/
+
+			cout << "Doing cudaMemcpy for " << i << " out of " << DIMENSION << endl;
+			// Move counterparts to device (cudaMemcpy)
+			cout << "Ar" << endl;
+			cudaMemcpy(devAr, Ar, arraySize * sizeof(float), cudaMemcpyHostToDevice);
+			cout << "Ai" << endl;
+			cudaMemcpy(devAi, Ai, arraySize * sizeof(float), cudaMemcpyHostToDevice);
+			cout << "Br" << endl;
+			cudaMemcpy(devBr, Br, arraySize * sizeof(float), cudaMemcpyHostToDevice);
+			cout << "Bi" << endl;
+			cudaMemcpy(devBi, Bi, arraySize * sizeof(float), cudaMemcpyHostToDevice);
+			cout << "Cr" << endl;
+			cudaMemcpy(devCr, Cr, arraySize * sizeof(float), cudaMemcpyHostToDevice);
+			cout << "Ci" << endl;
+			cudaMemcpy(devCi, Ci, arraySize * sizeof(float), cudaMemcpyHostToDevice);
+
+			cout << "Launching grid" << endl;
+			// Launch grid with fieldMult
+			fieldMult<<<DIMENSION,1>>>(devAr, devBr, devCr, devAi, devBi, devCi);
+		
+			// Copy deviceCr and deviceCi back to host (cudaMemcpy)
+			cudaMemcpy(Cr, devCr, arraySize * sizeof(float), cudaMemcpyDeviceToHost);
+			cudaMemcpy(Ci, devCi, arraySize * sizeof(float), cudaMemcpyDeviceToHost);
+
+			//cout << "DEBUG: Cr and Ci: " << Cr[0] << " " << Ci[0] << endl;
+
+			// Deallocate all 6 counterparts (cudaFree)
+			cudaFree(&devAr);
+			cudaFree(&devBr);
+			cudaFree(&devCr);
+			cudaFree(&devAi);
+			cudaFree(&devBi);
+			cudaFree(&devCi);
+		}
+	}
 }
 
 //Applies the kernel to the image
@@ -99,72 +176,12 @@ void step(float** fields, int &current_field, float* imaginary_field, float* M_r
 }
 
 //Extract image data
-void draw_field(float** fields, int &current_field, int* color_shift, int* color_scale, int mThreads) {
-    //unsigned char data [DIMENSION * DIMENSION * 3];            
-    //int image_ptr = 0;
-    cudaError_t error;
-
+void draw_field(float** fields, int &current_field, int* color_shift, int* color_scale) {
+    unsigned char data [DIMENSION * DIMENSION * 3];            
+    int image_ptr = 0;
+    
     float* cur_field = fields[current_field];
     
-	int n = DIMENSION*DIMENSION;
-
-	unsigned char *h_data = new unsigned char[n * 3];
-	unsigned char *d_data;
-	error = cudaMalloc((void**)&d_data, n*3*sizeof(unsigned char));
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	error = cudaMemset(d_data, 0, n*3*sizeof(unsigned char));
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-
-	float *d_field;
-	error = cudaMalloc((void**)&d_field, n*sizeof(float));
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	error = cudaMemcpy(d_field, cur_field, n*sizeof(float), cudaMemcpyHostToDevice);
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-
-	int *d_color_scale;
-	error = cudaMalloc((void**)&d_color_scale, 3*sizeof(int));
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	error = cudaMemcpy(d_color_scale, color_scale, 3*sizeof(int), cudaMemcpyHostToDevice);
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-
-	int *d_color_shift;
-	error = cudaMalloc((void**)&d_color_shift, 3*sizeof(int));
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	error = cudaMemcpy(d_color_shift, color_shift, 3*sizeof(int), cudaMemcpyHostToDevice);
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-
-	error = cudaGetLastError();
-	draw_field<<<(n+mThreads-1) / mThreads, mThreads>>>(d_data, d_field, d_color_shift, d_color_scale, n);
-
-	cudaDeviceSynchronize();
-
-	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-
-	error = cudaMemcpy(h_data, d_data, n*3*sizeof(unsigned char), cudaMemcpyDeviceToHost);
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	
-	/*
     for(int i=0; i<DIMENSION; ++i) {
         for(int j=0; j<DIMENSION; ++j) {
             float s = cur_field[i*DIMENSION+j];
@@ -174,14 +191,8 @@ void draw_field(float** fields, int &current_field, int* color_shift, int* color
             }
         }
     }
-	*/
-	
-    createBMP(DIMENSION, DIMENSION, h_data, DIMENSION*DIMENSION*4, "temp.bmp");
-	cudaFree(d_data);
-	delete [] h_data;
-	cudaFree(d_field);
-	cudaFree(d_color_scale);
-	cudaFree(d_color_shift);
+
+    createBMP(DIMENSION, DIMENSION, data, DIMENSION*DIMENSION*4, "temp.bmp");
 }
 
 //Initialize field to x
@@ -248,23 +259,11 @@ int main() {
 	initialize_MN(M_re, M_im, N_re, N_im, inner_w, outer_w);
 
 	clear_field(0, fields, current_field);
-	add_speckles(300, 1, fields, current_field);
+	add_speckles(200, 1, fields, current_field);
 
-	int d;
-	cudaDeviceProp prop;
-	cudaGetDevice(&d);
-	cudaGetDeviceProperties(&prop, d);
-	int mThreads = prop.maxThreadsDim[0];
-	int mBlocks  = prop.maxGridSize[0];
-	int mElemnts = prop.totalGlobalMem / (D_MEM_CHUNKS * sizeof(float));
-
-	cout << "number of threads reduced to " << mThreads << endl;
-	cout << "number of blocks reduced to " << mBlocks << endl;
-	cout << "number of elements reduced to " << mElemnts << endl;
-
-	for (int i=0; i<100; i++) {
+	for (int i=0; i<10; i++) {
 		step(fields, current_field, imaginary_field, M_re, M_im, N_re, N_im, M_re_buffer, M_im_buffer, N_re_buffer, N_im_buffer);
-		draw_field(fields, current_field, color_shift, color_scale, mThreads);
+		draw_field(fields, current_field, color_shift, color_scale);
 	}
 	
 	delete [] fields[0];
