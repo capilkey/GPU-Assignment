@@ -86,23 +86,23 @@ void fieldMultOriginal(float* a_r, float* a_i, float* b_r, float* b_i, float* c_
 */
 
 void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i, int mThreads) {
-	for(int i=0; i<DIMENSION; ++i) {
-		cudaError_t error;
-		float *devAr, *devAi, *devBr, *devBi, *devCr, *devCi;
-		
-		error = cudaMalloc((void**)&devAr, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMalloc((void**)&devAi, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMalloc((void**)&devBr, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMalloc((void**)&devBi, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMalloc((void**)&devCr, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMalloc((void**)&devCi, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	cudaError_t error;
+	float *devAr, *devAi, *devBr, *devBi, *devCr, *devCi;
 
+	error = cudaMalloc((void**)&devAr, DIMENSION*sizeof(float));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMalloc((void**)&devAi, DIMENSION*sizeof(float));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMalloc((void**)&devBr, DIMENSION*sizeof(float));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMalloc((void**)&devBi, DIMENSION*sizeof(float));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMalloc((void**)&devCr, DIMENSION*sizeof(float));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMalloc((void**)&devCi, DIMENSION*sizeof(float));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	
+	for(int i=0; i<DIMENSION; ++i) {
 		error = cudaMemcpy(devAr, &a_r[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(devAi, &a_i[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
@@ -129,14 +129,13 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(&c_i[i*DIMENSION], devCi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		
-		cudaFree(&devAr);
-		cudaFree(&devAi);
-		cudaFree(&devBr);
-		cudaFree(&devBi);
-		cudaFree(&devCr);
-		cudaFree(&devCi);
 	}
+	cudaFree(&devAr);
+	cudaFree(&devAi);
+	cudaFree(&devBr);
+	cudaFree(&devBi);
+	cudaFree(&devCr);
+	cudaFree(&devCi);
 }
 
 //Applies the kernel to the image
