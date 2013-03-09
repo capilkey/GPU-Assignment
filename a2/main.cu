@@ -51,8 +51,10 @@ float S(float n,float m) {
     return sigma_2(n, lerp(B1, D1, alive), lerp(B2, D2, alive));
 }
 
-void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i) {
+
+void fieldMultOriginal(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i) {
     for(int i=0; i<DIMENSION; ++i) {
+		// All arrays are 1D of length DIMENSION ^2, except a_r might be only DIMENSION
         float *Ar = &a_r[i*DIMENSION], *Ai = &a_i[i*DIMENSION];
         float *Br = &b_r[i*DIMENSION], *Bi = &b_i[i*DIMENSION];
         float *Cr = &c_r[i*DIMENSION], *Ci = &c_i[i*DIMENSION];
@@ -66,6 +68,103 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
             Ci[j] = t + c*(b-a);
         }
     }
+}
+
+__global__ void fieldKernel(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i)
+{
+	//float a = a_r[threadIdx.x];
+    //float b = a_i[threadIdx.x];
+    //float c = b_r[threadIdx.x];
+    //float d = b_i[threadIdx.x];
+    //float t = a * (c + d);
+    //c_r[threadIdx.x] = t - d*(a+b);
+    //c_i[threadIdx.x] = t + c*(b-a);
+}
+
+void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i) {
+	for(int i=0; i<DIMENSION; ++i) {
+		cudaError_t error;
+
+		// All arrays are 1D of length DIMENSION ^2, except a_r might be only DIMENSION
+        float *Ar = &a_r[i*DIMENSION], *Ai = &a_i[i*DIMENSION];
+        float *Br = &b_r[i*DIMENSION], *Bi = &b_i[i*DIMENSION];
+        float *Cr = &c_r[i*DIMENSION], *Ci = &c_i[i*DIMENSION];
+		
+		float **devAr, **devAi, **devBr, **devBi, **devCr, **devCi;
+		
+		cout << "cudaMallocing" << endl;
+		error = cudaMalloc((void**)&devAr, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMalloc((void**)&devAi, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMalloc((void**)&devBr, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMalloc((void**)&devBi, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMalloc((void**)&devCr, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMalloc((void**)&devCi, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+
+		cout << "cudaMemseting" << endl;
+		error = cudaMemset(devAr, 0, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemset(devAi, 0, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemset(devBr, 0, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemset(devBi, 0, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemset(devCr, 0, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemset(devCi, 0, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+
+		
+		cout << "cudaMemcpying" << endl;
+		error = cudaMemcpy(devAr, &a_r[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(devAi, &a_i[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(devBr, &b_r[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(devBi, &b_i[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(devCr, &c_r[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(devCi, &c_i[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		
+		cout << "Launching..." << endl;
+		// Don't compile...
+		// fieldKernel<<<DIMENSION,1>>>(devAr, devAi, devBr, devBi, devCr, devCi);
+		// fieldKernel<<<DIMENSION,1>>>(**devAr, **devAi, **devBr, **devBi, **devCr, **devCi);
+		// fieldKernel<<<DIMENSION,1>>>(&devAr, &devAi, &devBr, &devBi, &devCr, &devCi);
+		// fieldKernel<<<DIMENSION,1>>>(&&devAr, &&devAi, &&devBr, &&devBi, &&devCr, &&devCi);
+
+		// Compiles, but hangs
+		fieldKernel<<<DIMENSION,1>>>(*devAr, *devAi, *devBr, *devBi, *devCr, *devCi);
+				
+
+		cudaDeviceSynchronize();
+		cout << "Synchronized. cudaFreeing" << endl;
+		cudaFree(&devAr);
+		cudaFree(&devAi);
+		cudaFree(&devBr);
+		cudaFree(&devBi);
+		cudaFree(&devCr);
+		cudaFree(&devCi);
+
+		for(int j=0; j<DIMENSION; ++j) {
+            float a = Ar[j];
+            float b = Ai[j];
+            float c = Br[j];
+            float d = Bi[j];
+            float t = a * (c + d);
+            Cr[j] = t - d*(a+b);
+            Ci[j] = t + c*(b-a);
+        }
+	}
 }
 
 //Applies the kernel to the image
