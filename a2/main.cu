@@ -140,17 +140,37 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
 
 		cudaDeviceSynchronize();
 		
-		/*
+		// This group produces vertical stripes
+		error = cudaMemcpy(&a_r[i*DIMENSION], devAr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(&a_i[i*DIMENSION], devAi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(&b_r[i*DIMENSION], devBr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(&b_i[i*DIMENSION], devBi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(&c_r[i*DIMENSION], devCr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(&c_i[i*DIMENSION], devCi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		*/
+		///vertical stripes
+		
 
+		
+		/*
+		error = cudaMemcpy(a_r, devAr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(a_i, devAi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(b_r, devBr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(b_i, devBi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(c_r, devCr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(c_i, devCi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		*/
 		
 		cudaFree(&devAr);
 		cudaFree(&devAi);
