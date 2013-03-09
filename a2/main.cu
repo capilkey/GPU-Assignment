@@ -100,21 +100,6 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
 		error = cudaMalloc((void**)&devCi, DIMENSION*sizeof(float));
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 
-		//cout << "cudaMemseting" << endl;
-		error = cudaMemset(devAr, 0, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemset(devAi, 0, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemset(devBr, 0, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemset(devBi, 0, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemset(devCr, 0, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemset(devCi, 0, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-
-		
 		//cout << "cudaMemcpying" << endl;
 		error = cudaMemcpy(devAr, &a_r[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
@@ -132,7 +117,7 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
 		//cout << "Launching " << i << " of " << DIMENSION << "..." << endl;
 		
 		error = cudaGetLastError();
-		fieldKernel<<<DIMENSION,1>>>(devAr, devAi, devBr, devBi, devCr, devCi);
+		fieldKernel<<<1, DIMENSION>>>(devAr, devAi, devBr, devBi, devCr, devCi);
 		error = cudaGetLastError();
 		if (error != cudaSuccess) {
 			cout << cudaGetErrorString(error) << endl;
@@ -140,7 +125,6 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
 
 		cudaDeviceSynchronize();
 		
-		// This group produces vertical stripes
 		error = cudaMemcpy(&a_r[i*DIMENSION], devAr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(&a_i[i*DIMENSION], devAi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
@@ -153,24 +137,6 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(&c_i[i*DIMENSION], devCi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		///vertical stripes
-		
-
-		
-		/*
-		error = cudaMemcpy(a_r, devAr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(a_i, devAi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(b_r, devBr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(b_i, devBi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(c_r, devCr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(c_i, devCi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		*/
 		
 		cudaFree(&devAr);
 		cudaFree(&devAi);
