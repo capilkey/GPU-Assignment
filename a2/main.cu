@@ -21,6 +21,20 @@ __global__ void draw_field(unsigned char *data, float *curr_field, int *color_sh
 	}
 }
 
+__global__ void fieldKernel(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i)
+{
+	int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx < DIMENSION) {
+		float a = a_r[threadIdx.x];
+		float b = a_i[threadIdx.x];
+		float c = b_r[threadIdx.x];
+		float d = b_i[threadIdx.x];
+		float t = a * (c + d);
+		c_r[threadIdx.x] = t - d*(a+b);
+		c_i[threadIdx.x] = t + c*(b-a);
+	}
+}
+
 //Precalculate multipliers for m,n
 void initialize_MN(float* M_re, float* M_im, float* N_re, float* N_im, float inner_w, float outer_w){ 
     for(int i=0; i<DIMENSION; ++i) {
@@ -51,7 +65,7 @@ float S(float n,float m) {
     return sigma_2(n, lerp(B1, D1, alive), lerp(B2, D2, alive));
 }
 
-
+/*
 void fieldMultOriginal(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i) {
     for(int i=0; i<DIMENSION; ++i) {
 		// All arrays are 1D of length DIMENSION ^2, except a_r might be only DIMENSION
@@ -69,24 +83,13 @@ void fieldMultOriginal(float* a_r, float* a_i, float* b_r, float* b_i, float* c_
         }
     }
 }
-
-__global__ void fieldKernel(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i)
-{
-	float a = a_r[threadIdx.x];
-	float b = a_i[threadIdx.x];
-	float c = b_r[threadIdx.x];
-	float d = b_i[threadIdx.x];
-	float t = a * (c + d);
-	c_r[threadIdx.x] = t - d*(a+b);
-	c_i[threadIdx.x] = t + c*(b-a);
-}
+*/
 
 void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i, int mThreads) {
 	for(int i=0; i<DIMENSION; ++i) {
 		cudaError_t error;
 		float *devAr, *devAi, *devBr, *devBi, *devCr, *devCi;
 		
-		//cout << "cudaMallocing" << endl;
 		error = cudaMalloc((void**)&devAr, DIMENSION*sizeof(float));
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMalloc((void**)&devAi, DIMENSION*sizeof(float));
@@ -100,7 +103,6 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
 		error = cudaMalloc((void**)&devCi, DIMENSION*sizeof(float));
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 
-		//cout << "cudaMemcpying" << endl;
 		error = cudaMemcpy(devAr, &a_r[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(devAi, &a_i[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
@@ -113,11 +115,9 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(devCi, &c_i[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		
-		//cout << "Launching " << i << " of " << DIMENSION << "..." << endl;
-		
+				
 		error = cudaGetLastError();
-		fieldKernel<<<1, DIMENSION>>>(devAr, devAi, devBr, devBi, devCr, devCi);
+		fieldKernel<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(devAr, devAi, devBr, devBi, devCr, devCi);
 		error = cudaGetLastError();
 		if (error != cudaSuccess) {
 			cout << cudaGetErrorString(error) << endl;
@@ -125,14 +125,6 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
 
 		cudaDeviceSynchronize();
 		
-		error = cudaMemcpy(&a_r[i*DIMENSION], devAr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(&a_i[i*DIMENSION], devAi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(&b_r[i*DIMENSION], devBr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(&b_i[i*DIMENSION], devBi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(&c_r[i*DIMENSION], devCr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		error = cudaMemcpy(&c_i[i*DIMENSION], devCi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
@@ -342,7 +334,6 @@ int main() {
 	cout << "number of elements reduced to " << mElemnts << endl;
 
 	for (int i=0; i<100; i++) {
-		cout << "DEBUG: Stepping " << i << " of 100" << endl;
 		step(fields, current_field, imaginary_field, M_re, M_im, N_re, N_im, M_re_buffer, M_im_buffer, N_re_buffer, N_im_buffer, mThreads);
 		draw_field(fields, current_field, color_shift, color_scale, mThreads);
 	}
