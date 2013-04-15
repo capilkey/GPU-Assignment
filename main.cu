@@ -118,7 +118,7 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 				
 		error = cudaGetLastError();
-		//fieldKernel<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(devAr, devAi, devBr, devBi, devCr, devCi);
+		fieldKernel<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(devAr, devAi, devBr, devBi, devCr, devCi);
 		error = cudaGetLastError();
 		if (error != cudaSuccess) {
 			cout << cudaGetErrorString(error) << endl;
