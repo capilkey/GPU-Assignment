@@ -27,8 +27,7 @@ __global__ void draw_field(unsigned char *data, float *curr_field, int *color_sh
 	}
 }
 
-__global__ void fieldKernel(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i)
-{
+__global__ void fieldKernel(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i){
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	if (idx < DIMENSION) {
 		float a = a_r[threadIdx.x];
@@ -58,10 +57,12 @@ __global__ void fft2Kernel2(int dir, int m, float* x, float* y){
 }
 
 void stepField(float* cur_field, float* imaginary_field, float* M_re, float* M_im, float* M_re_buffer, float* M_im_buffer, float* N_re, float* N_im, float* N_re_buffer, float* N_im_buffer, int mThreads){
-	//cout << "DEBUG: Entering stepField" << endl;
+	cout << "DEBUG: Entering stepField" << endl;
 	// Allocate device copies of each argument going to various fft2 calls
 	cudaError_t error;
+	
 	// fields
+	//cout << "DEBUG: Stepfield allocating fields" << endl;
 	float* devCurField;
 		error = cudaMalloc((void**)&devCurField, DIMENSION*sizeof(float));
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
@@ -74,6 +75,7 @@ void stepField(float* cur_field, float* imaginary_field, float* M_re, float* M_i
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 	
 	// buffers
+	//cout << "DEBUG: Stepfield allocating buffers" << endl;
 	float* devMREBuff;
 		error = cudaMalloc((void**)&devMREBuff, DIMENSION*sizeof(float));
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
@@ -96,26 +98,31 @@ void stepField(float* cur_field, float* imaginary_field, float* M_re, float* M_i
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 		
 	// other
-	int dimSquared = DIMENSION*DIMENSION;
+	//cout << "DEBUG: Stepfield allocating other" << endl;
+	//int dimSquared = DIMENSION*DIMENSION;
 	float* devMRE;
-		error = cudaMalloc((void**)&devMRE, dimSquared*sizeof(float));
+		//cout << "DEBUG: Stepfield allocating devMRE" << endl;
+		error = cudaMalloc((void**)&devMRE, DIMENSION*sizeof(float));
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devMRE, &M_re, dimSquared*sizeof(float), cudaMemcpyHostToDevice);
+		error = cudaMemcpy(devMRE, &M_re, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 	float* devMIM;
-		error = cudaMalloc((void**)&devMIM, dimSquared*sizeof(float));
+		//cout << "DEBUG: Stepfield allocating devMIM" << endl;
+		error = cudaMalloc((void**)&devMIM, DIMENSION*sizeof(float));
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devMIM, &M_im, dimSquared*sizeof(float), cudaMemcpyHostToDevice);
+		error = cudaMemcpy(devMIM, &M_im, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 	float* devNRE;
-		error = cudaMalloc((void**)&devNRE, dimSquared*sizeof(float));
+		//cout << "DEBUG: Stepfield allocating devNRE" << endl;
+		error = cudaMalloc((void**)&devNRE, DIMENSION*sizeof(float));
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devNRE, &N_re, dimSquared*sizeof(float), cudaMemcpyHostToDevice);
+		error = cudaMemcpy(devNRE, &N_re, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 	float* devNIM;
-		error = cudaMalloc((void**)&devNIM, dimSquared*sizeof(float));
+		//cout << "DEBUG: Stepfield allocating devNIM" << endl;
+		error = cudaMalloc((void**)&devNIM, DIMENSION*sizeof(float));
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devNIM, &N_im, dimSquared*sizeof(float), cudaMemcpyHostToDevice);
+		error = cudaMemcpy(devNIM, &N_im, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
 		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 	/*
 	int* devMThreads = new int[1];
@@ -131,29 +138,33 @@ void stepField(float* cur_field, float* imaginary_field, float* M_re, float* M_i
 	// FFT2 process:
 	// kernel1, kernel2, kernel1 again
 	
+	cout << "DEBUG: Stepfield allocation done, about to try to kernel" << endl;
+	
 	// First FFT2
 	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(1, LOG_RES, devCurField, devImaField);
 	error = cudaGetLastError();
 	if (error != cudaSuccess) {
 		cout << cudaGetErrorString(error) << endl;
 	}
+	cout << "DEBUG: First FFT part 1 done." << endl;
 	cudaDeviceSynchronize();
 	fft2Kernel2<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(1, LOG_RES, devCurField, devImaField);
 	error = cudaGetLastError();
 	if (error != cudaSuccess) {
 		cout << cudaGetErrorString(error) << endl;
 	}
+	cout << "DEBUG: First FFT part 2 done." << endl;
 	cudaDeviceSynchronize();
 	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(1, LOG_RES, devCurField, devImaField);
 	error = cudaGetLastError();
 	if (error != cudaSuccess) {
 		cout << cudaGetErrorString(error) << endl;
 	}
+	cout << "DEBUG: First FFT part 3 done." << endl;
 	cudaDeviceSynchronize();
 	// /First FFT2
 	// First FieldMultiply
 	field_multiply(devCurField, devImaField, devMRE, devMIM, devMREBuff, devMIMBuff, mThreads);
-	cudaDeviceSynchronize();
 	
 	// Second FFT2
 	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devMREBuff, devMIMBuff);
@@ -161,23 +172,25 @@ void stepField(float* cur_field, float* imaginary_field, float* M_re, float* M_i
 	if (error != cudaSuccess) {
 		cout << cudaGetErrorString(error) << endl;
 	}
+	cout << "DEBUG: Second FFT part 1 done." << endl;
 	cudaDeviceSynchronize();
 	fft2Kernel2<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devMREBuff, devMIMBuff);
 	error = cudaGetLastError();
 	if (error != cudaSuccess) {
 		cout << cudaGetErrorString(error) << endl;
 	}
+	cout << "DEBUG: Second FFT part 2 done." << endl;
 	cudaDeviceSynchronize();
 	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devMREBuff, devMIMBuff);
 	error = cudaGetLastError();
 	if (error != cudaSuccess) {
 		cout << cudaGetErrorString(error) << endl;
 	}
+	cout << "DEBUG: Second FFT part 3 done." << endl;
 	cudaDeviceSynchronize();
 	// /Second FFT2
 	// Second FieldMultiply
 	field_multiply(devCurField, devImaField, devNRE, devNIM, devNREBuff, devNIMBuff, mThreads);
-	cudaDeviceSynchronize();
 	
 	// Third FFT2
 	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devNREBuff, devNIMBuff);
@@ -185,27 +198,29 @@ void stepField(float* cur_field, float* imaginary_field, float* M_re, float* M_i
 	if (error != cudaSuccess) {
 		cout << cudaGetErrorString(error) << endl;
 	}
+	cout << "DEBUG: Third FFT part 1 done." << endl;
 	cudaDeviceSynchronize();
 	fft2Kernel2<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devNREBuff, devNIMBuff);
 	error = cudaGetLastError();
 	if (error != cudaSuccess) {
 		cout << cudaGetErrorString(error) << endl;
 	}
+	cout << "DEBUG: Third FFT part 1 done." << endl;
 	cudaDeviceSynchronize();
 	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devNREBuff, devNIMBuff);
 	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	cout << "DEBUG: Third FFT part 1 done." << endl;
 	cudaDeviceSynchronize();
 	// /Third FFT2
 	
+	cout << "DEBUG: Ready to copy back." << endl;
 	// Copy back from device to host
 	error = cudaMemcpy(&N_re_buffer, devNREBuff, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
 	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
 	error = cudaMemcpy(&N_im_buffer, devNIMBuff, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
 	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	cudaDeviceSynchronize();
+	cout << "DEBUG: Copying back done." << endl;
 	
 	/* //Original Logic
 	fft2(1, LOG_RES, cur_field, imaginary_field);
@@ -227,6 +242,7 @@ void stepField(float* cur_field, float* imaginary_field, float* M_re, float* M_i
 	cudaFree(devNRE);
 	cudaFree(devNIM);
 	//cudaFree(devMThreads);
+	cout << "DEBUG: Leaving stepField" << endl;
 }
 
 //Precalculate multipliers for m,n
@@ -245,18 +261,30 @@ void initialize_MN(float* M_re, float* M_im, float* N_re, float* N_im, float inn
 float sigma(float x, float a, float alpha) {
     return (float)( 1.0 / (1.0 + exp(-4.0/alpha * (x - a))));
 }
-
 float sigma_2(float x, float a, float b) {
     return (float)( sigma(x, a, ALPHA_N) * (1.0f - sigma(x, b, ALPHA_N)));
 }
-
 float lerp(float a, float b, float t) {
     return (float)( (1.0f-t)*a + t*b);
 }
-
 float S(float n,float m) {
     float alive = sigma(m, 0.5f, ALPHA_M);
     return sigma_2(n, lerp(B1, D1, alive), lerp(B2, D2, alive));
+}
+
+
+__device__ float devSigma(float x, float a, float alpha) {
+    return (float)( 1.0 / (1.0 + exp(-4.0/alpha * (x - a))));
+}
+__device__ float devSigma_2(float x, float a, float b) {
+    return (float)( devSigma(x, a, ALPHA_N) * (1.0f - devSigma(x, b, ALPHA_N)));
+}
+__device__ float devLerp(float a, float b, float t) {
+    return (float)( (1.0f-t)*a + t*b);
+}
+__device__ float devS(float n,float m) {
+    float alive = devSigma(m, 0.5f, ALPHA_M);
+    return devSigma_2(n, devLerp(B1, D1, alive), devLerp(B2, D2, alive));
 }
 
 /*
@@ -341,6 +369,22 @@ void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, 
 	*/
 }
 
+// __global__ void fft2Kernel1(int dir, int m, float* x, float* y){
+//	devfft(dir, m, &x[threadIdx.x*DIMENSION], &y[threadIdx.x*DIMENSION]);
+//}
+
+__global__ void clearImaginary(float* field){
+	for(int j=0; j<DIMENSION; ++j) {
+		field[threadIdx.x*DIMENSION+j] = 0.0f;
+	}
+}
+
+__global__ void stepKernel(float* next_field, float* N_re_buffer, float* M_re_buffer){
+	for(int j=0; j<DIMENSION; ++j) {
+		next_field[threadIdx.x*DIMENSION+j] = devS(N_re_buffer[threadIdx.x*DIMENSION+j], M_re_buffer[threadIdx.x*DIMENSION+j]);
+	}
+}
+
 //Applies the kernel to the image
 void step(float** fields, int &current_field, float* imaginary_field, float* M_re, float* M_im, float* N_re, float* N_im, float* M_re_buffer, float* M_im_buffer, float* N_re_buffer, float* N_im_buffer, int mThreads) {
     
@@ -350,23 +394,75 @@ void step(float** fields, int &current_field, float* imaginary_field, float* M_r
     float* next_field = fields[current_field];
     
     //Clear extra imaginary field
-	// >>> GOOD KERNEL CANDIDATE <<<
-    for(int i=0; i<DIMENSION; ++i) {
+	/*for(int i=0; i<DIMENSION; ++i) {
         for(int j=0; j<DIMENSION; ++j) {
             imaginary_field[i*DIMENSION+j] = 0.0;
         }
-    }
-    
+    }*/
+	cudaError_t error;
+	
+	float* devImaginary;
+	error = cudaMalloc((void**)&devImaginary, DIMENSION*sizeof(float));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMemcpy(devImaginary, &imaginary_field, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	
+	cout << "DEBUG: About to clearImaginary" << endl;
+	clearImaginary<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(devImaginary);
+	error = cudaGetLastError();
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	cudaDeviceSynchronize();
+	
+	error = cudaMemcpy(&imaginary_field, devImaginary, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	
+	cout << "DEBUG: clearImaginary done" << endl;
+	
+	cout << "DEBUG: About to stepField" << endl;
     //Compute m,n fields
 	stepField(cur_field, imaginary_field, M_re, M_im, M_re_buffer, M_im_buffer, N_re, N_im, N_re_buffer, N_im_buffer, mThreads);
-    
+    cout << "DEBUG: stepField done" << endl;
+	
     //Step s
 	// >>> GOOD KERNEL CANDIDATE <<<
-    for(int i=0; i<DIMENSION; ++i) {
+    /*for(int i=0; i<DIMENSION; ++i) {
         for(int j=0; j<DIMENSION; ++j) {
             next_field[i*DIMENSION+j] = S(N_re_buffer[i*DIMENSION+j], M_re_buffer[i*DIMENSION+j]);
         }
-    }
+    }*/
+	
+	cout << "Allocating and copying devNext" << endl;
+	float* devNext;
+		error = cudaMalloc((void**)&devNext, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(devNext, &next_field, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	
+	cout << "Allocating and copying devNREBuff" << endl;
+	float* devNREBuff;
+		error = cudaMalloc((void**)&devNREBuff, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(devNREBuff, &N_re_buffer, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	
+	cout << "Allocating and copying devMREBuff" << endl;
+	float* devMREBuff;
+		error = cudaMalloc((void**)&devMREBuff, DIMENSION*sizeof(float));
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+		error = cudaMemcpy(devMREBuff, &M_re_buffer, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
+		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	
+	cout << "DEBUG: About to stepkernel" << endl;
+	stepKernel<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(devNext, devNREBuff, devMREBuff);
+	error = cudaGetLastError();
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	cudaDeviceSynchronize();
+	cout << "DEBUG: stepkernel done" << endl;
+	
+	cudaFree(devImaginary);
+	cudaFree(devNext);
+	cudaFree(&devNREBuff);
+	cudaFree(&devMREBuff);
 }
 
 //Extract image data
