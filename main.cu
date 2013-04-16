@@ -1,242 +1,73 @@
+#pragma comment ( lib, "cufft.lib" )
 
 #include <iostream>
 #include <algorithm>
 #include <time.h>
 #include <cuda_runtime.h>
+#include <cufft.h>
 #include "device_launch_parameters.h"
 #include "utils.h"
-#include "besselj.h"
 
 #define D_MEM_CHUNKS 2
+#define INNER_RADIUS 7
+#define OUTER_RADIUS 3 * INNER_RADIUS
+#define B1 0.238f
+#define B2 0.365f
+#define D1 0.267f
+#define D2 0.445f
+#define ALPHA_N 0.028f
+#define ALPHA_M 0.147f
+#define LOG_RES 8
+#define DIMENSION 256
+#define NUM_FIELDS 2;
 
 using namespace std;
 
-// Forward declaration of device version of FFT()
-__device__ void devfft(int dir, int m, float* x, float* y);
-// Forward declaration of field_multiply
-void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i, int mThreads);
+/* 
+ * Complex type definition taken from the cuFFT samples.
+ */
+typedef float2 Complex;
+static __device__ __host__ inline Complex ComplexAdd(Complex, Complex);
+static __device__ __host__ inline Complex ComplexScale(Complex, float);
+static __device__ __host__ inline Complex ComplexMul(Complex, Complex);
 
-__global__ void draw_field(unsigned char *data, float *curr_field, int *color_shift, int *color_scale, int n) {
+void fft(int, int, Complex*);
+void fft2(int, int, Complex*, cufftHandle);
+Complex* besselJ(int, float&, cufftHandle);
+
+__global__ void draw_field(unsigned char *data, Complex *curr_field, int *color_shift, int *color_scale, int n) {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
 	if (idx < n) {
 		int place = idx * 3;
-		float s = curr_field[idx];
+		float s = curr_field[idx].x;
 		for(int k=0; k<3; ++k) {
             data[place+k] = max(0, min(255, (int)(color_shift[k] + color_scale[k]*s)));
         }
 	}
 }
 
-__global__ void fieldKernel(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i)
+__global__ void fieldKernel(Complex* a, Complex* b, Complex* c, int n)
 {
 	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if (idx < DIMENSION) {
-		float a = a_r[threadIdx.x];
-		float b = a_i[threadIdx.x];
-		float c = b_r[threadIdx.x];
-		float d = b_i[threadIdx.x];
-		float t = a * (c + d);
-		c_r[threadIdx.x] = t - d*(a+b);
-		c_i[threadIdx.x] = t + c*(b-a);
+	if (idx < n) {
+		float ax = a[idx].x;
+		float ay = a[idx].y;
+		float bx = b[idx].x;
+		float by = b[idx].y;
+		float t = ax * (bx + by);
+		c[idx].x = t - by*(ax+ay);
+		c[idx].y = t + bx*(ay-ax);
 	}
-}
-
-__global__ void fft2Kernel1(int dir, int m, float* x, float* y){
-	devfft(dir, m, &x[threadIdx.x*DIMENSION], &y[threadIdx.x*DIMENSION]);
-}
-
-__global__ void fft2Kernel2(int dir, int m, float* x, float* y){
-	for(int j=0; j<threadIdx.x; ++j) {
-		float a = x[threadIdx.x*DIMENSION+j];
-		x[threadIdx.x*DIMENSION+j] = x[j*DIMENSION+threadIdx.x];
-		x[j*DIMENSION+threadIdx.x] = a;
-		
-		float b = y[threadIdx.x*DIMENSION+j];
-		y[threadIdx.x*DIMENSION+j] = y[j*DIMENSION+threadIdx.x];
-		y[j*DIMENSION+threadIdx.x] = b;
-	}
-}
-
-void stepField(float* cur_field, float* imaginary_field, float* M_re, float* M_im, float* M_re_buffer, float* M_im_buffer, float* N_re, float* N_im, float* N_re_buffer, float* N_im_buffer, int mThreads){
-	//cout << "DEBUG: Entering stepField" << endl;
-	// Allocate device copies of each argument going to various fft2 calls
-	cudaError_t error;
-	// fields
-	float* devCurField;
-		error = cudaMalloc((void**)&devCurField, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devCurField, &cur_field, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	float* devImaField;
-		error = cudaMalloc((void**)&devImaField, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devImaField, &imaginary_field, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	
-	// buffers
-	float* devMREBuff;
-		error = cudaMalloc((void**)&devMREBuff, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devMREBuff, &M_re_buffer, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	float* devMIMBuff;
-		error = cudaMalloc((void**)&devMIMBuff, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devMIMBuff, &M_im_buffer, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	float* devNREBuff;
-		error = cudaMalloc((void**)&devNREBuff, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devNREBuff, &N_re_buffer, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	float* devNIMBuff;
-		error = cudaMalloc((void**)&devNIMBuff, DIMENSION*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devNIMBuff, &N_im_buffer, DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		
-	// other
-	int dimSquared = DIMENSION*DIMENSION;
-	float* devMRE;
-		error = cudaMalloc((void**)&devMRE, dimSquared*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devMRE, &M_re, dimSquared*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	float* devMIM;
-		error = cudaMalloc((void**)&devMIM, dimSquared*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devMIM, &M_im, dimSquared*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	float* devNRE;
-		error = cudaMalloc((void**)&devNRE, dimSquared*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devNRE, &N_re, dimSquared*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	float* devNIM;
-		error = cudaMalloc((void**)&devNIM, dimSquared*sizeof(float));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devNIM, &N_im, dimSquared*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	/*
-	int* devMThreads = new int[1];
-		error = cudaMalloc((void**)&devMThreads, sizeof(int));
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devMThreads, &mThreads, sizeof(int), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	*/
-	error = cudaGetLastError();
-	
-	//cout << ".";
-	
-	// FFT2 process:
-	// kernel1, kernel2, kernel1 again
-	
-	// First FFT2
-	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(1, LOG_RES, devCurField, devImaField);
-	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	cudaDeviceSynchronize();
-	fft2Kernel2<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(1, LOG_RES, devCurField, devImaField);
-	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	cudaDeviceSynchronize();
-	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(1, LOG_RES, devCurField, devImaField);
-	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	cudaDeviceSynchronize();
-	// /First FFT2
-	// First FieldMultiply
-	field_multiply(devCurField, devImaField, devMRE, devMIM, devMREBuff, devMIMBuff, mThreads);
-	cudaDeviceSynchronize();
-	
-	// Second FFT2
-	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devMREBuff, devMIMBuff);
-	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	cudaDeviceSynchronize();
-	fft2Kernel2<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devMREBuff, devMIMBuff);
-	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	cudaDeviceSynchronize();
-	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devMREBuff, devMIMBuff);
-	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	cudaDeviceSynchronize();
-	// /Second FFT2
-	// Second FieldMultiply
-	field_multiply(devCurField, devImaField, devNRE, devNIM, devNREBuff, devNIMBuff, mThreads);
-	cudaDeviceSynchronize();
-	
-	// Third FFT2
-	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devNREBuff, devNIMBuff);
-	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	cudaDeviceSynchronize();
-	fft2Kernel2<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devNREBuff, devNIMBuff);
-	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	cudaDeviceSynchronize();
-	fft2Kernel1<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(-1, LOG_RES, devNREBuff, devNIMBuff);
-	error = cudaGetLastError();
-	if (error != cudaSuccess) {
-		cout << cudaGetErrorString(error) << endl;
-	}
-	cudaDeviceSynchronize();
-	// /Third FFT2
-	
-	// Copy back from device to host
-	error = cudaMemcpy(&N_re_buffer, devNREBuff, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	error = cudaMemcpy(&N_im_buffer, devNIMBuff, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	cudaDeviceSynchronize();
-	
-	/* //Original Logic
-	fft2(1, LOG_RES, cur_field, imaginary_field);
-    field_multiply(cur_field, imaginary_field, M_re, M_im, M_re_buffer, M_im_buffer, mThreads);
-    fft2(-1, LOG_RES, M_re_buffer, M_im_buffer);
-    field_multiply(cur_field, imaginary_field, N_re, N_im, N_re_buffer, N_im_buffer, mThreads);
-    fft2(-1, LOG_RES, N_re_buffer, N_im_buffer);
-	//Original Logic */
-	
-	// Deallocate everything
-	cudaFree(devCurField);
-	cudaFree(devImaField);	
-	cudaFree(devMREBuff);
-	cudaFree(devMIMBuff);
-	cudaFree(devNREBuff);
-	cudaFree(devNIMBuff);
-	cudaFree(devMRE);
-	cudaFree(devMIM);
-	cudaFree(devNRE);
-	cudaFree(devNIM);
-	//cudaFree(devMThreads);
 }
 
 //Precalculate multipliers for m,n
-void initialize_MN(float* M_re, float* M_im, float* N_re, float* N_im, float inner_w, float outer_w){ 
+void initialize_MN(Complex* M, Complex* N, float inner_w, float outer_w){ 
     for(int i=0; i<DIMENSION; ++i) {
         for(int j=0; j<DIMENSION; ++j) {
-            N_re[i*DIMENSION+j] = outer_w * (N_re[i*DIMENSION+j] - M_re[i*DIMENSION+j]);
-            N_im[i*DIMENSION+j] = outer_w * (N_im[i*DIMENSION+j] - M_im[i*DIMENSION+j]);
-            M_re[i*DIMENSION+j] *= inner_w;
-            M_im[i*DIMENSION+j] *= inner_w;
+            N[i*DIMENSION+j].x = outer_w * (N[i*DIMENSION+j].x - M[i*DIMENSION+j].x);
+            N[i*DIMENSION+j].y = outer_w * (N[i*DIMENSION+j].y - M[i*DIMENSION+j].y);
+            M[i*DIMENSION+j].x *= inner_w;
+            M[i*DIMENSION+j].y *= inner_w;
         }
     }
 }
@@ -259,123 +90,90 @@ float S(float n,float m) {
     return sigma_2(n, lerp(B1, D1, alive), lerp(B2, D2, alive));
 }
 
-/*
-void fieldMultOriginal(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i) {
-    for(int i=0; i<DIMENSION; ++i) {
-		// All arrays are 1D of length DIMENSION ^2, except a_r might be only DIMENSION
-        float *Ar = &a_r[i*DIMENSION], *Ai = &a_i[i*DIMENSION];
-        float *Br = &b_r[i*DIMENSION], *Bi = &b_i[i*DIMENSION];
-        float *Cr = &c_r[i*DIMENSION], *Ci = &c_i[i*DIMENSION];
-        for(int j=0; j<DIMENSION; ++j) {
-            float a = Ar[j];
-            float b = Ai[j];
-            float c = Br[j];
-            float d = Bi[j];
-            float t = a * (c + d);
-            Cr[j] = t - d*(a+b);
-            Ci[j] = t + c*(b-a);
-        }
-    }
-}
-*/
+void field_multiply(Complex* d_A, Complex* d_B, Complex* d_C, int mThreads) {
+	cudaError_t error;
 
-// Rewrite to use the parameters that come in as if they were device arrays to begin with
-void field_multiply(float* a_r, float* a_i, float* b_r, float* b_i, float* c_r, float* c_i, int mThreads) {
-	//cudaError_t error;
-	//float *devAr, *devAi, *devBr, *devBi, *devCr, *devCi;
-	/*
-	error = cudaMalloc((void**)&devAr, DIMENSION*sizeof(float));
-	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	error = cudaMalloc((void**)&devAi, DIMENSION*sizeof(float));
-	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	error = cudaMalloc((void**)&devBr, DIMENSION*sizeof(float));
-	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	error = cudaMalloc((void**)&devBi, DIMENSION*sizeof(float));
-	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	error = cudaMalloc((void**)&devCr, DIMENSION*sizeof(float));
-	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	error = cudaMalloc((void**)&devCi, DIMENSION*sizeof(float));
-	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-	*/
-	//cout << "DEBUG: Entering field_multiply" << endl;
-	for(int i=0; i<DIMENSION; ++i) {
-		/*
-		error = cudaMemcpy(devAr, &a_r[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devAi, &a_i[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devBr, &b_r[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devBi, &b_i[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devCr, &c_r[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(devCi, &c_i[i*DIMENSION], DIMENSION*sizeof(float), cudaMemcpyHostToDevice);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}	
-		error = cudaGetLastError();
-		*/
-		//fieldKernel<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(devAr, devAi, devBr, devBi, devCr, devCi);
-		cudaError_t error;
-		fieldKernel<<<(DIMENSION+mThreads-1) / mThreads, mThreads>>>(a_r, a_i, b_r, b_i, c_r, c_i);
-		error = cudaGetLastError();
-		if (error != cudaSuccess) {
-			cout << cudaGetErrorString(error) << endl;
-		}
-
-		cudaDeviceSynchronize();
-		
-		/*
-		error = cudaMemcpy(&c_r[i*DIMENSION], devCr, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		error = cudaMemcpy(&c_i[i*DIMENSION], devCi, DIMENSION*sizeof(float), cudaMemcpyDeviceToHost);
-		if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
-		*/
+	error = cudaGetLastError();
+	fieldKernel<<<(DIMENSION*DIMENSION+mThreads-1) / mThreads, mThreads>>>(d_A, d_B, d_C, DIMENSION*DIMENSION);
+	error = cudaGetLastError();
+	if (error != cudaSuccess) {
+		cout << cudaGetErrorString(error) << endl;
 	}
-	/*
-	cudaFree(devAr);
-	cudaFree(devAi);
-	cudaFree(devBr);
-	cudaFree(devBi);
-	cudaFree(devCr);
-	cudaFree(devCi);
-	*/
+
+	cudaDeviceSynchronize();
 }
 
 //Applies the kernel to the image
-void step(float** fields, int &current_field, float* imaginary_field, float* M_re, float* M_im, float* N_re, float* N_im, float* M_re_buffer, float* M_im_buffer, float* N_re_buffer, float* N_im_buffer, int mThreads) {
-    
+void step(Complex** fields, int &current_field, Complex* M, Complex* N, Complex* M_buffer, Complex* N_buffer, int mThreads, cufftHandle plan) {
+    cudaError_t error;
+	Complex *d_cur_field, *d_M, *d_N, *d_M_buffer, *d_N_buffer;
     //Read in fields
-    float* cur_field = fields[current_field];
+    Complex* cur_field = fields[current_field];
     current_field = (current_field + 1) % 2;
-    float* next_field = fields[current_field];
+    Complex* next_field = fields[current_field];
     
-    //Clear extra imaginary field
-	// >>> GOOD KERNEL CANDIDATE <<<
+    //Clear imaginary values from cur_field
     for(int i=0; i<DIMENSION; ++i) {
         for(int j=0; j<DIMENSION; ++j) {
-            imaginary_field[i*DIMENSION+j] = 0.0;
+            cur_field[i*DIMENSION+j].y = 0.0f;
         }
     }
     
+	error = cudaMalloc((void**)&d_cur_field, DIMENSION*DIMENSION*sizeof(Complex));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMalloc((void**)&d_M, DIMENSION*DIMENSION*sizeof(Complex));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMalloc((void**)&d_N, DIMENSION*DIMENSION*sizeof(Complex));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMalloc((void**)&d_M_buffer, DIMENSION*DIMENSION*sizeof(Complex));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMalloc((void**)&d_N_buffer, DIMENSION*DIMENSION*sizeof(Complex));
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+
+	error = cudaMemcpy(d_cur_field, cur_field, DIMENSION*DIMENSION*sizeof(Complex), cudaMemcpyHostToDevice);
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMemcpy(d_M, M, DIMENSION*DIMENSION*sizeof(Complex), cudaMemcpyHostToDevice);
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMemcpy(d_N, N, DIMENSION*DIMENSION*sizeof(Complex), cudaMemcpyHostToDevice);
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMemcpy(d_M_buffer, M_buffer, DIMENSION*DIMENSION*sizeof(Complex), cudaMemcpyHostToDevice);
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMemcpy(d_N_buffer, N_buffer, DIMENSION*DIMENSION*sizeof(Complex), cudaMemcpyHostToDevice);
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+
     //Compute m,n fields
-	stepField(cur_field, imaginary_field, M_re, M_im, M_re_buffer, M_im_buffer, N_re, N_im, N_re_buffer, N_im_buffer, mThreads);
+    fft2(1, LOG_RES, d_cur_field, plan);
+    field_multiply(d_cur_field, d_M, d_M_buffer, mThreads);
+    fft2(-1, LOG_RES, d_M_buffer, plan);
+    field_multiply(d_cur_field, d_N, d_N_buffer, mThreads);
+    fft2(-1, LOG_RES, d_N_buffer, plan);
     
+	error = cudaMemcpy(M_buffer, d_M_buffer, DIMENSION*DIMENSION*sizeof(Complex), cudaMemcpyDeviceToHost);
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+	error = cudaMemcpy(N_buffer, d_N_buffer, DIMENSION*DIMENSION*sizeof(Complex), cudaMemcpyDeviceToHost);
+	if (error != cudaSuccess) {cout << cudaGetErrorString(error) << endl;}
+
     //Step s
-	// >>> GOOD KERNEL CANDIDATE <<<
     for(int i=0; i<DIMENSION; ++i) {
         for(int j=0; j<DIMENSION; ++j) {
-            next_field[i*DIMENSION+j] = S(N_re_buffer[i*DIMENSION+j], M_re_buffer[i*DIMENSION+j]);
+            next_field[i*DIMENSION+j].x = S(N_buffer[i*DIMENSION+j].x, M_buffer[i*DIMENSION+j].x);
         }
     }
+
+	cudaFree(d_cur_field);
+	cudaFree(d_M);
+	cudaFree(d_N);
+	cudaFree(d_M_buffer);
+	cudaFree(d_N_buffer);
 }
 
 //Extract image data
-void draw_field(float** fields, int &current_field, int* color_shift, int* color_scale, int mThreads) {
+void draw_field(Complex** fields, int &current_field, int* color_shift, int* color_scale, int mThreads) {
     //unsigned char data [DIMENSION * DIMENSION * 3];            
     //int image_ptr = 0;
     cudaError_t error;
 
-    float* cur_field = fields[current_field];
+    Complex* cur_field = fields[current_field];
     
 	int n = DIMENSION*DIMENSION;
 
@@ -390,12 +188,12 @@ void draw_field(float** fields, int &current_field, int* color_shift, int* color
 		cout << cudaGetErrorString(error) << endl;
 	}
 
-	float *d_field;
-	error = cudaMalloc((void**)&d_field, n*sizeof(float));
+	Complex *d_field;
+	error = cudaMalloc((void**)&d_field, n*sizeof(Complex));
 	if (error != cudaSuccess) {
 		cout << cudaGetErrorString(error) << endl;
 	}
-	error = cudaMemcpy(d_field, cur_field, n*sizeof(float), cudaMemcpyHostToDevice);
+	error = cudaMemcpy(d_field, cur_field, n*sizeof(Complex), cudaMemcpyHostToDevice);
 	if (error != cudaSuccess) {
 		cout << cudaGetErrorString(error) << endl;
 	}
@@ -456,22 +254,22 @@ void draw_field(float** fields, int &current_field, int* color_shift, int* color
 }
 
 //Initialize field to x
-void clear_field(float x, float** fields, int &current_field) {
-    float* cur_field = fields[current_field];
+void clear_field(float x, Complex** fields, int &current_field) {
+    Complex* cur_field = fields[current_field];
 
     for(int i=0; i<DIMENSION; ++i) {
         for(int j=0; j<DIMENSION; ++j) {
-          cur_field[i*DIMENSION+j] = x;
+          cur_field[i*DIMENSION+j].x = x;
+		  cur_field[i*DIMENSION+j].y = 0.0f;
         }
     }
 }
 
 
 //Place a bunch of speckles on the field
-void add_speckles(int count, float intensity, float **fields, int &current_field) {
-    float* cur_field = fields[current_field];
+void add_speckles(int count, float intensity, Complex **fields, int &current_field) {
+    Complex* cur_field = fields[current_field];
 
-	//THIS ISNT WORKING AND I DONT KNOW WHY!!!!!!
 	srand(time(NULL));
 
     for(int i=0; i<count; ++i) {
@@ -479,7 +277,7 @@ void add_speckles(int count, float intensity, float **fields, int &current_field
         int v = (int)(rand() % (DIMENSION-INNER_RADIUS) + 1);
         for(int x=0; x<INNER_RADIUS; ++x) {
             for(int y=0; y<INNER_RADIUS; ++y) {
-                cur_field[(u+x)*DIMENSION+v+y] = intensity;
+                cur_field[(u+x)*DIMENSION+v+y].x = intensity;
             }
         }
     }
@@ -493,33 +291,14 @@ int main() {
 	//Buffers
 	int field_dims[2] = {DIMENSION, DIMENSION};
 	int field_size = field_dims[0] * field_dims[1];
-	float* fields[2];
+	Complex* fields[2];
 
 	for(int i=0; i < 2; ++i) {
-		fields[i] = new float [field_size];
+		fields[i] = (Complex *)malloc(sizeof(Complex) * field_size);
 	}
-	float* imaginary_field = new float[field_size];
 	int current_field = 0;
-	float* M_re_buffer = new float[field_size]; // old version was a two dimensional array [256, 256]
-	float* M_im_buffer = new float[field_size];
-	float* N_re_buffer = new float[field_size];
-	float* N_im_buffer = new float[field_size];
-
-	BesselJ inner_bessel(INNER_RADIUS);
-    BesselJ outer_bessel(OUTER_RADIUS);
-    
-    float inner_w = (float)1.0 / inner_bessel.w;
-    float outer_w = (float)1.0 / (outer_bessel.w - inner_bessel.w);
-    
-    float *M_re = inner_bessel.re;
-    float *M_im = inner_bessel.im;
-    float *N_re = outer_bessel.re;
-    float *N_im = outer_bessel.im;
-
-	initialize_MN(M_re, M_im, N_re, N_im, inner_w, outer_w);
-
-	clear_field(0, fields, current_field);
-	add_speckles(300, 1.0f, fields, current_field);
+	Complex* M_buffer = (Complex *)malloc(sizeof(Complex) * field_size); // old version was a two dimensional array [256, 256]
+	Complex* N_buffer = (Complex *)malloc(sizeof(Complex) * field_size);
 
 	int d;
 	cudaDeviceProp prop;
@@ -529,50 +308,61 @@ int main() {
 	int mBlocks  = prop.maxGridSize[0];
 	int mElemnts = prop.totalGlobalMem / (D_MEM_CHUNKS * sizeof(float));
 
-	cout << "number of threads reduced to " << mThreads << endl;
-	cout << "number of blocks reduced to " << mBlocks << endl;
-	cout << "number of elements reduced to " << mElemnts << endl;
+	cufftHandle plan;
+	int dims[2] = {DIMENSION, DIMENSION};
+	if (cufftPlanMany(&plan, 2, dims, NULL, 1, 0, NULL, 1, 0, CUFFT_C2C, 1) != CUFFT_SUCCESS){
+		cout << "CUFFT Error: Unable to create plan" << endl;
+	}
+	if (cufftSetCompatibilityMode(plan, CUFFT_COMPATIBILITY_NATIVE)!= CUFFT_SUCCESS){
+		cout << "CUFFT Error: Unable to set compatibility mode to native" << endl;	
+	}
 
+	float inner_width;
+	float outer_width;
+	Complex* M = besselJ(INNER_RADIUS, inner_width, plan);
+    Complex* N = besselJ(OUTER_RADIUS, outer_width, plan);
+    
+    float inner_w = (float)1.0f / inner_width;
+    float outer_w = (float)1.0f / (outer_width - inner_width);
+
+	initialize_MN(M, N, inner_w, outer_w);
+
+	clear_field(0.0f, fields, current_field);
+	add_speckles(300, 1.0f, fields, current_field);
+	
 	for (int i=0; i<100; i++) {
-		step(fields, current_field, imaginary_field, M_re, M_im, N_re, N_im, M_re_buffer, M_im_buffer, N_re_buffer, N_im_buffer, mThreads);
+		step(fields, current_field, M, N, M_buffer, N_buffer, mThreads, plan);
 		draw_field(fields, current_field, color_shift, color_scale, mThreads);
 	}
 	
-	delete [] fields[0];
-	delete [] fields[1];
-	delete [] imaginary_field;
-	delete [] M_re_buffer;
-	delete [] M_im_buffer;
-	delete [] N_re_buffer;
-	delete [] N_im_buffer;
-	delete [] M_re;
-	delete [] M_im;
-	delete [] N_re;
-	delete [] N_im;
+	free(fields[0]);
+	free(fields[1]);
+	free(M_buffer);
+	free(N_buffer);
+	free(M);
+	free(N);
+	
+	cufftDestroy(plan);
 
-	cout << "debug" << endl;
 	return 0;
 }
 
 //FFT
-__device__ void devfft(int dir, int m, float* x, float* y) {
-   int nn,i,i1,j,k,i2,l,l1,l2;
-   float c1,c2,tx,ty,t1,t2,u1,u2,z;
-    
-    // Calculate the number of points 
+void fft(int dir, int m, Complex* a) {
+	int nn,i,i1,j,k,i2,l,l1,l2;
+	float c1,c2,t1,t2,u1,u2,z;
+	Complex t;
+    /* Calculate the number of points */
     nn = DIMENSION;
     
-    // Do the bit reversal 
+    /* Do the bit reversal */
     i2 = nn >> 1;
     j = 0;
     for (i=0;i<nn-1;i++) {
       if (i < j) {
-         tx = x[i];
-         ty = y[i];
-         x[i] = x[j];
-         y[i] = y[j];
-         x[j] = tx;
-         y[j] = ty;
+         t = a[i];
+         a[i] = a[j];
+         a[j] = t;
       }
       k = i2;
       while (k <= j) {
@@ -582,41 +372,117 @@ __device__ void devfft(int dir, int m, float* x, float* y) {
       j += k;
     }
     
-    // Compute the FFT 
-    c1 = -1.0;
-    c2 = 0.0;
+    /* Compute the FFT */
+    c1 = -1.0f;
+    c2 = 0.0f;
     l2 = 1;
     for (l=0;l<m;l++) {
       l1 = l2;
       l2 <<= 1;
-      u1 = 1.0;
-      u2 = 0.0;
+      u1 = 1.0f;
+      u2 = 0.0f;
       for (j=0;j<l1;j++) {
          for (i=j;i<nn;i+=l2) {
             i1 = i + l1;
-            t1 = u1 * x[i1] - u2 * y[i1];
-            t2 = u1 * y[i1] + u2 * x[i1];
-            x[i1] = x[i] - t1;
-            y[i1] = y[i] - t2;
-            x[i] += t1;
-            y[i] += t2;
+			t1 = u1 * a[i1].x - u2 * a[i1].y;
+            t2 = u1 * a[i1].y + u2 * a[i1].x;
+            a[i1].x = a[i].x - t1;
+            a[i1].y = a[i].y - t2;
+            a[i].x += t1;
+            a[i].y += t2;
          }
          z =  u1 * c1 - u2 * c2;
          u2 = u1 * c2 + u2 * c1;
          u1 = z;
       }
-      c2 = sqrt((1.0 - c1) / 2.0);
+      c2 = sqrt((1.0f - c1) / 2.0f);
       if (dir == 1)
          c2 = -c2;
-      c1 = sqrt((1.0 + c1) / 2.0);
+      c1 = sqrt((1.0f + c1) / 2.0f);
     }
     
-    // Scaling for forward transform
+    /* Scaling for forward transform */
     if (dir == -1) {
-      float scale_f = 1.0 / nn;        
+      float scale_f = 1.0f / nn;        
       for (i=0;i<nn;i++) {
-         x[i] *= scale_f;
-         y[i] *= scale_f;
+         a[i] = ComplexScale(a[i], scale_f);
       }
     }
 }
+
+//In place 2D fft
+void fft2(int dir, int m, Complex* a, cufftHandle plan) {
+	if (cufftExecC2C(plan, (cufftComplex*)a, (cufftComplex*)a, (dir==1 ? CUFFT_FORWARD : CUFFT_INVERSE)) != CUFFT_SUCCESS){
+		cout << "CUFFT Error: Unable to execute plan" << endl;	
+	}
+}
+
+//In place 2D fft
+void hostfft2(int dir, int m, Complex* a) {
+  for(int i=0; i<DIMENSION; ++i) {
+    fft(dir, m, &a[i*DIMENSION]);
+  }
+  for(int i=0; i<DIMENSION; ++i) {
+    for(int j=0; j<i; ++j) {
+      Complex t = a[i*DIMENSION+j];
+      a[i*DIMENSION+j] = a[j*DIMENSION+i];
+      a[j*DIMENSION+i] = t;
+    }
+  }
+
+  for(int i=0; i<DIMENSION; ++i) {
+    fft(dir, m, &a[i*DIMENSION]);
+  }
+}
+
+Complex* besselJ(int radius, float &w, cufftHandle plan) {
+	int field_size = DIMENSION * DIMENSION;
+
+    //Do this in a somewhat stupid way
+    Complex* a = (Complex *)malloc(sizeof(Complex) * field_size);;
+    w = 0.0f;
+    for(int i=0; i<DIMENSION; ++i) {
+        for(int j=0; j<DIMENSION; ++j) {
+            float ii = (float)((i + DIMENSION/2) % DIMENSION) - DIMENSION/2;
+            float jj = (float)((j + DIMENSION/2) % DIMENSION) - DIMENSION/2;
+            
+            float r = sqrt(ii*ii + jj*jj) - radius;
+            float v = 1.0f / (1.0f + exp(LOG_RES * r));
+            
+            w += v;
+            a[i*DIMENSION+j].x = v;
+			a[i*DIMENSION+j].y = 0.0f;
+        }
+    }
+    
+    hostfft2(1, LOG_RES, a);
+
+	return a;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Complex operations
+////////////////////////////////////////////////////////////////////////////////
+
+// Complex scale
+static __device__ __host__ inline Complex ComplexScale(Complex a, float s)
+{
+    Complex c;
+    c.x = s * a.x;
+    c.y = s * a.y;
+    return c;
+}
+
+// Complex pointwise multiplication
+/*
+static __global__ void ComplexPointwiseMulAndScale(Complex *a, const Complex *b, int size, float scale)
+{
+    const int numThreads = blockDim.x * gridDim.x;
+    const int threadID = blockIdx.x * blockDim.x + threadIdx.x;
+
+    for (int i = threadID; i < size; i += numThreads)
+    {
+        a[i] = ComplexScale(ComplexMul(a[i], b[i]), scale);
+    }
+}
+*/
