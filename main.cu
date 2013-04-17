@@ -12,9 +12,9 @@
 #define INNER_RADIUS 7
 #define OUTER_RADIUS 3 * INNER_RADIUS
 #define B1 0.238f
-#define B2 0.365f
-#define D1 0.267f
-#define D2 0.445f
+#define B2 0.465f
+#define D1 0.467f
+#define D2 0.645f
 #define ALPHA_N 0.028f
 #define ALPHA_M 0.147f
 #define LOG_RES 8
@@ -67,8 +67,13 @@ __global__ void fieldKernel(Complex* a, Complex* b, Complex* c, int n) {
 __global__ void S(Complex* a, Complex* b, Complex* c, int n) {
 	int idx = threadIdx.x + blockDim.x * blockIdx.x;
 	if (idx < n) {
-		float alive = sigma(c[idx].x, 0.5f, ALPHA_M);
-		a[idx].x = sigma_2(b[idx].x, lerp(B1, D1, alive), lerp(B2, D2, alive));
+		float bx = b[idx].x;
+		float alive = 1.0f / (1.0f + expf(-4.0f/ALPHA_M * (c[idx].x - 0.5f)));
+		float lerp1 = (1.0f-alive)*B1 + alive*D1;
+		float lerp2 = (1.0f-alive)*B2 + alive*D2;
+		float sigma1 = 1.0f / (1.0f + expf(-4.0f/ALPHA_N * (bx - lerp1)));
+		float sigma2 = 1.0f / (1.0f + expf(-4.0f/ALPHA_N * (bx - lerp2)));
+		a[idx].x = sigma1 * (1.0f - sigma2);
 	}
 }
 
@@ -93,7 +98,7 @@ void initialize_MN(Complex* M, Complex* N, float inner_w, float outer_w){
 
 
 __device__ float sigma(float x, float a, float alpha) {
-    return (float)( 1.0f / (1.0f + exp(-4.0f/alpha * (x - a))));
+    return (float)( 1.0f / (1.0f + expf(-4.0f/alpha * (x - a))));
 }
 
 __device__ float sigma_2(float x, float a, float b) {
